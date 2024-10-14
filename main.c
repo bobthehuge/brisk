@@ -3,6 +3,7 @@
 #include <raymath.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/types.h>
 
 #define BTH_SALLOC_IMPLEMENTATION
 #include "bth_salloc.h"
@@ -16,7 +17,7 @@
 #define GET_MAP_MASK(n) ((n)%8)
 #define VISIT(n, m) (m[GET_MAP_IDX(n)] |= (0x01 << GET_MAP_MASK(n)))
 #define STATE(n, m) (m[GET_MAP_IDX(n)] & (0x01 << GET_MAP_MASK(n)))
-#define R 15.0
+#define R 10.0
 
 struct Node
 {
@@ -25,7 +26,6 @@ struct Node
     char units;
     uint32_t adjs[8];
 };
-
 typedef struct Node Node;
 
 static uint32_t MAP_ORDER = 0;
@@ -33,37 +33,44 @@ static Node *NODES;
 
 int mod(int a, int b)
 {
-   int ret = a % b;
-   if(ret < (0x7FFFFFFF))
-     ret+=b;
-   return ret;
+    int ret = a % b;
+
+    if (ret < 0)
+        ret += b;
+
+    return ret;
 }
 
-void RenderNodes(uint32_t start, char *marker)
+void RenderNodes(uint32_t start, char **m)
 {
     struct Node *s = &NODES[start];
-    VISIT(s->uid, marker);
+    // VISIT(s->uid, marker);
+    m[start][start] = 1;
     Vector2 pos = Vector2Add(s->pos, WIN_CENTER);
 
     DrawCircleV(pos, R, DARKBLUE);
 
     for (int i = 0; i < 8; i++)
     {
-        if (s->adjs[i] == 0xFFFFFFFF)
+        uint32_t adj = s->adjs[i];
+        if (adj == 0xFFFFFFFF)
             continue;
 
-        if (!STATE(s->adjs[i], marker))
+        if (m[start][adj] == 0 && m[adj][start] == 0)
         {
-            Vector2 npos = NODES[s->adjs[i]].pos;
-            DrawLine(
-                pos.x,
-                pos.y,
-                npos.x + WIN_CENTER.x,
-                npos.y + WIN_CENTER.y,
-                DARKBLUE
-            );
-            RenderNodes(s->adjs[i], marker);
+            Vector2 npos = Vector2Add(NODES[adj].pos, WIN_CENTER);
+            DrawLineEx(pos, npos, 2.0, DARKBLUE);
+            m[start][s->adjs[i]] = 1;
+            m[s->adjs[i]][start] = 1;
+
+            if (m[adj][adj] == 0)
+                RenderNodes(s->adjs[i], m);
         }
+
+        // if (!STATE(s->adjs[i], marker))
+        // {
+        //     RenderNodes(s->adjs[i], marker, emarker);
+        // }
     }
 }
 
@@ -78,7 +85,7 @@ void InitMap(uint32_t *start)
 
     NODES = srealloc(NODES, (MAP_ORDER + 8) * sizeof(Node));
     memset(NODES + MAP_ORDER, 0, 8 * sizeof(Node));
-    float rad = R * 6;
+    float rad = R * 5;
 
     for (int i = 0; i < 8; i++)
     {
@@ -89,8 +96,9 @@ void InitMap(uint32_t *start)
 
         NODES[uid].uid = uid;
         NODES[uid].pos = pos;
-        NODES[uid].adjs[0] = mod(uid - 1, 8) + 1;
-        NODES[uid].adjs[1] = mod(uid + 1, 8) + 1;
+        NODES[uid].adjs[0] = s->uid;
+        NODES[uid].adjs[1] = s->uid + 1 + (uint32_t)mod(i - 1, 8);
+        NODES[uid].adjs[2] = s->uid + 1 + (uint32_t)mod(i + 1, 8);
         s->adjs[i] = uid;
     }
 
@@ -107,18 +115,15 @@ int main(void)
     uint32_t start;
     InitMap(&start);
     size_t memsize = MAP_ORDER / 8 + ((MAP_ORDER % 8) == 0 ? 0 : 1);
-    char *marker = malloc(memsize);
-    
-    // TraceLog(LOG_TRACE, TextFormat("%zu", memsize));
-    // TraceLog(LOG_TRACE, TextFormat("%d", STATE(7, marker)));
-    // TraceLog(LOG_TRACE, TextFormat("%d", MAP_ORDER));
-    // TraceLog(LOG_TRACE, TextFormat("%zu", memsize));
-    // TraceLog(LOG_TRACE, TextFormat("%d", MAP_ORDER / 8));
-    // TraceLog(LOG_TRACE, TextFormat("%d", MAP_ORDER % 8));
+    char **marker = smalloc(MAP_ORDER * sizeof(char *));
 
-    while(!WindowShouldClose())
+    for (uint32_t i = 0; i < MAP_ORDER; i++)
+        marker[i] = smalloc(MAP_ORDER * sizeof(char));
+
+    while (!WindowShouldClose())
     {
-        memset(marker, 0, memsize);
+        for (uint32_t i = 0; i < MAP_ORDER; i++)
+            memset(marker[i], 0, MAP_ORDER);
 
         BeginDrawing();
             ClearBackground(RAYWHITE);
