@@ -1,4 +1,6 @@
+#include <math.h>
 #include <raylib.h>
+#include <raymath.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -7,80 +9,93 @@
 
 #define WIN_WIDTH  800
 #define WIN_HEIGHT 600
+#define WIN_CENTER (CLITERAL(Vector2){WIN_WIDTH/2.0,WIN_HEIGHT/2.0})
 
-#define GET_IDX(s) ((s)/8)
-#define GET_MASK(s) ((s)%8)
-#define VISIT(n, m) (m[GET_IDX(n)] |= (0x01 << GET_MASK(n)))
-#define STATE(n, m) (m[GET_IDX(n)] & (0x01 << GET_MASK(n)))
-#define R 20.0
-
-static uint32_t MAP_ORDER = 0;
+#define GET_UID(n) NODES[(n)].uid
+#define GET_MAP_IDX(n) ((n)/8)
+#define GET_MAP_MASK(n) ((n)%8)
+#define VISIT(n, m) (m[GET_MAP_IDX(n)] |= (0x01 << GET_MAP_MASK(n)))
+#define STATE(n, m) (m[GET_MAP_IDX(n)] & (0x01 << GET_MAP_MASK(n)))
+#define R 15.0
 
 struct Node
 {
     uint32_t uid;
     Vector2 pos;
     char units;
-    char count;
-    struct Node *adjs; // max 8 neighbors
+    uint32_t adjs[8];
 };
 
 typedef struct Node Node;
 
-void RenderNodes(Node *start, char *marker)
+static uint32_t MAP_ORDER = 0;
+static Node *NODES;
+
+int mod(int a, int b)
 {
-    VISIT(start->uid, marker);
+   int ret = a % b;
+   if(ret < (0x7FFFFFFF))
+     ret+=b;
+   return ret;
+}
 
-    Vector2 pos = {
-        WIN_WIDTH / 2.0 + start->pos.x,
-        WIN_HEIGHT / 2.0 + start->pos.y,
-    };
+void RenderNodes(uint32_t start, char *marker)
+{
+    struct Node *s = &NODES[start];
+    VISIT(s->uid, marker);
+    Vector2 pos = Vector2Add(s->pos, WIN_CENTER);
 
-    DrawPoly(pos, 8, R, 0, DARKBLUE);
+    DrawCircleV(pos, R, DARKBLUE);
 
-    // TraceLog(LOG_TRACE, TextFormat("%d", start->uid));
-
-    for (char i = 0; i < start->count; i++)
+    for (int i = 0; i < 8; i++)
     {
-        uint32_t id = start->adjs[i].uid;
-        if (!STATE(id, marker))
+        if (s->adjs[i] == 0xFFFFFFFF)
+            continue;
+
+        if (!STATE(s->adjs[i], marker))
         {
-            RenderNodes(&start->adjs[i], marker);
+            Vector2 npos = NODES[s->adjs[i]].pos;
+            DrawLine(
+                pos.x,
+                pos.y,
+                npos.x + WIN_CENTER.x,
+                npos.y + WIN_CENTER.y,
+                DARKBLUE
+            );
+            RenderNodes(s->adjs[i], marker);
         }
     }
 }
 
-void InitMap(Node **start)
+void InitMap(uint32_t *start)
 {
     Node *s = smalloc(sizeof(Node));
 
     s->uid = MAP_ORDER++;
     s->pos = (Vector2){0.0, 0.0};
     s->units = 0;
-    s->count = 8;
-    s->adjs = smalloc(8 * sizeof(Node));
-    memset(s->adjs, 0, 8 * sizeof(Node));
+    memset(s->adjs, 0xFFFFFFFF, 8 * sizeof(uint32_t));
 
-    s->adjs[0].uid = MAP_ORDER++;
-    s->adjs[1].uid = MAP_ORDER++;
-    s->adjs[2].uid = MAP_ORDER++;
-    s->adjs[3].uid = MAP_ORDER++;
-    s->adjs[4].uid = MAP_ORDER++;
-    s->adjs[5].uid = MAP_ORDER++;
-    s->adjs[7].uid = MAP_ORDER++;
-    s->adjs[8].uid = MAP_ORDER++;
+    NODES = srealloc(NODES, (MAP_ORDER + 8) * sizeof(Node));
+    memset(NODES + MAP_ORDER, 0, 8 * sizeof(Node));
+    float rad = R * 6;
 
-    float p = R * 4;
-    s->adjs[0].pos = (Vector2){0, p};
-    s->adjs[1].pos = (Vector2){p, p};
-    s->adjs[2].pos = (Vector2){p, 0};
-    s->adjs[3].pos = (Vector2){p, -p};
-    s->adjs[4].pos = (Vector2){-p, 0};
-    s->adjs[5].pos = (Vector2){-p, -p};
-    s->adjs[6].pos = (Vector2){-p, 0};
-    s->adjs[7].pos = (Vector2){-p, p};
+    for (int i = 0; i < 8; i++)
+    {
+        uint32_t uid = MAP_ORDER++;
+        Vector2 pos = {cos(i*PI/4) * rad, sin(i*PI/4) * rad};
 
-    *start = s;
+        memset(NODES[uid].adjs, 0xFFFFFFFF, 8 * sizeof(uint32_t));
+
+        NODES[uid].uid = uid;
+        NODES[uid].pos = pos;
+        NODES[uid].adjs[0] = mod(uid - 1, 8) + 1;
+        NODES[uid].adjs[1] = mod(uid + 1, 8) + 1;
+        s->adjs[i] = uid;
+    }
+
+    NODES[s->uid] = *s;
+    *start = s->uid;
 }
 
 int main(void)
@@ -89,13 +104,17 @@ int main(void)
     InitWindow(WIN_WIDTH, WIN_HEIGHT, "Bob's R.I.S.K");
     // SetTraceLogLevel(LOG_TRACE);
 
-    Node *start;
+    uint32_t start;
     InitMap(&start);
-    size_t memsize = MAP_ORDER / 8 + (MAP_ORDER % 8) == 0 ? 0 : 1;
+    size_t memsize = MAP_ORDER / 8 + ((MAP_ORDER % 8) == 0 ? 0 : 1);
     char *marker = malloc(memsize);
     
     // TraceLog(LOG_TRACE, TextFormat("%zu", memsize));
     // TraceLog(LOG_TRACE, TextFormat("%d", STATE(7, marker)));
+    // TraceLog(LOG_TRACE, TextFormat("%d", MAP_ORDER));
+    // TraceLog(LOG_TRACE, TextFormat("%zu", memsize));
+    // TraceLog(LOG_TRACE, TextFormat("%d", MAP_ORDER / 8));
+    // TraceLog(LOG_TRACE, TextFormat("%d", MAP_ORDER % 8));
 
     while(!WindowShouldClose())
     {
@@ -107,6 +126,7 @@ int main(void)
         EndDrawing();
     }
 
+    SetTraceLogLevel(LOG_FATAL);
     CloseWindow();
     return 0;
 }
